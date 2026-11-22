@@ -51,6 +51,7 @@ h1{margin:0;font-size:24px}
 .tab{font-size:13px;padding:11px 3px}.lb{width:100%;margin-top:8px}.lbrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 6px;border-bottom:1px solid rgba(128,128,128,.25);font-size:14px}.lbrow.me{background:rgba(255,122,0,.18);border-radius:10px}.lbrow .pos{width:30px;font-weight:800;text-align:center}.lbrow .nm{flex:1;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lbrow .val{font-weight:800}.lbrow .oth{width:100%;padding-left:38px;font-size:11px;color:var(--mut)}
 .pv.neon{animation:neon 3.2s linear infinite}
 @keyframes neon{0%,100%{filter:drop-shadow(0 0 5px #00f0ff) drop-shadow(0 0 12px #00f0ff)}33%{filter:drop-shadow(0 0 5px #7a5cff) drop-shadow(0 0 12px #7a5cff)}66%{filter:drop-shadow(0 0 5px #ff2bd6) drop-shadow(0 0 12px #ff2bd6)}}
+input{user-select:text;-webkit-user-select:text}.inp{width:100%;box-sizing:border-box;padding:11px 12px;margin:4px 0;border-radius:12px;border:2px solid transparent;background:rgba(128,128,128,.18);color:var(--fg);font-size:16px}.inp:focus{outline:0;border-color:var(--ac)}
 </style>
 </head>
 <body>
@@ -87,7 +88,7 @@ while(S.cars.length<11)S.cars.push(0);
 if(S.cfg.snd===undefined)S.cfg.snd=1;
 if(S.cfg.shd===undefined)S.cfg.shd=1;
 if(S.cfg.tun===undefined)S.cfg.tun=1;
-const save=()=>{try{localStorage.setItem('carros2d_v3',JSON.stringify(S))}catch(e){}};
+const save=()=>{try{localStorage.setItem('carros2d_v3',JSON.stringify(S))}catch(e){}cloudQueue()};
 const $=id=>document.getElementById(id);
 const rnd=(a,b)=>a+Math.random()*(b-a);
 let LB={rows:null,db:null,uid:null,canW:null,sort:'s',busy:0,sig:null};
@@ -123,12 +124,12 @@ async function fbAuth(){
   let r;
   if(st&&st.rt){
     r=await fetch('https://securetoken.googleapis.com/v1/token?key='+FB.key,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=refresh_token&refresh_token='+encodeURIComponent(st.rt)});
-    if(r.ok){const j=await r.json();FBT={id:j.id_token,uid:j.user_id,exp:now+(+j.expires_in)*1000};try{localStorage.setItem('carros2d_fb',JSON.stringify({rt:j.refresh_token,uid:j.user_id}))}catch(e){}return FBT}
+    if(r.ok){const j=await r.json();FBT={id:j.id_token,uid:j.user_id,exp:now+(+j.expires_in)*1000};try{localStorage.setItem('carros2d_fb',JSON.stringify({rt:j.refresh_token,uid:j.user_id,em:ACC.em}))}catch(e){}return FBT}
   }
   r=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+FB.key,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})});
   if(!r.ok)throw new Error('auth '+r.status);
   const j=await r.json();FBT={id:j.idToken,uid:j.localId,exp:now+(+j.expiresIn)*1000};
-  try{localStorage.setItem('carros2d_fb',JSON.stringify({rt:j.refreshToken,uid:j.localId}))}catch(e){}
+  try{localStorage.setItem('carros2d_fb',JSON.stringify({rt:j.refreshToken,uid:j.localId,em:ACC.em}))}catch(e){}
   return FBT;
 }
 async function fbLoad(){
@@ -161,6 +162,78 @@ async function lbSync(){
   }catch(e){LB.err=String(e&&e.message||e)}
   LB.busy=0;
 }
+let ACC={em:null,msg:''};
+try{const st=JSON.parse(localStorage.getItem('carros2d_fb'));if(st&&st.em)ACC.em=st.em}catch(e){}
+const FSV='https://firestore.googleapis.com/v1/projects/'+FB.pid+'/databases/(default)/documents/saves';
+async function fbPost(p,b){const r=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:'+p+'?key='+FB.key,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||('error '+r.status));return j}
+function accErr(e){const m=String(e&&e.message||e);const T={EMAIL_EXISTS:'Ese correo ya tiene cuenta. Usa "Entrar".',INVALID_EMAIL:'El correo no es válido.',WEAK_PASSWORD:'La contraseña debe tener al menos 6 caracteres.',OPERATION_NOT_ALLOWED:'Falta activar "Correo y contraseña" en Firebase.',INVALID_LOGIN_CREDENTIALS:'Correo o contraseña incorrectos.',EMAIL_NOT_FOUND:'Ese correo no tiene cuenta.',INVALID_PASSWORD:'Contraseña incorrecta.',MISSING_PASSWORD:'Escribe tu contraseña.',MISSING_EMAIL:'Escribe tu correo.',TOO_MANY_ATTEMPTS_TRY_LATER:'Demasiados intentos. Espera un rato.'};for(const k in T)if(m.indexOf(k)==0)return T[k];return 'No se pudo: '+m}
+function accSession(j){FBT={id:j.idToken,uid:j.localId,exp:Date.now()+(+j.expiresIn||3600)*1000};ACC.em=j.email||ACC.em;try{localStorage.setItem('carros2d_fb',JSON.stringify({rt:j.refreshToken,uid:j.localId,em:ACC.em}))}catch(e){}LB.uid=j.localId;LB.sig=null}
+let accT=null;
+function cloudQueue(){if(!ACC.em)return;clearTimeout(accT);accT=setTimeout(cloudPush,4000)}
+async function cloudPush(){
+  if(!ACC.em)return false;
+  try{const a=await fbAuth();const body={fields:{d:{stringValue:JSON.stringify(S)},u:{integerValue:String(Date.now())}}};
+    const r=await fetch(FSV+'/'+a.uid,{method:'PATCH',headers:{'Content-Type':'application/json','Authorization':'Bearer '+a.id},body:JSON.stringify(body)});
+    ACC.msg=r.ok?'☁️ Guardado en la nube':'No se pudo guardar ('+r.status+')';return r.ok}
+  catch(e){ACC.msg='No se pudo guardar en la nube';return false}
+}
+async function cloudGet(){
+  const a=await fbAuth();const r=await fetch(FSV+'/'+a.uid,{headers:{'Authorization':'Bearer '+a.id}});
+  if(r.status==404)return null;if(!r.ok)throw new Error('lectura '+r.status);
+  const j=await r.json();try{return JSON.parse(j.fields.d.stringValue)}catch(e){return null}
+}
+function applyCloud(d){
+  if(!d||!Array.isArray(d.cars)||!Array.isArray(d.maps))return false;
+  S.coins=Math.max(0,+d.coins||0);S.cars=d.cars.map(v=>v?1:0);S.maps=d.maps.map(v=>v?1:0);
+  while(S.cars.length<11)S.cars.push(0);while(S.maps.length<6)S.maps.push(0);
+  S.car=S.cars[+d.car]?+d.car:0;S.map=S.maps[+d.map]?+d.map:0;
+  if(typeof d.name=='string')S.name=d.name.slice(0,14);
+  S.best=Math.max(S.best,+d.best||0);S.bestScore=Math.max(S.bestScore,+d.bestScore||0);S.bestTime=Math.max(S.bestTime,+d.bestTime||0);
+  if(d.cfg&&typeof d.cfg=='object')S.cfg=Object.assign({time:'auto',ev:1,snd:1,shd:1,tun:1},d.cfg);
+  try{localStorage.setItem('carros2d_v3',JSON.stringify(S))}catch(e){}
+  $('nm').value=S.name;LB.sig=null;lbSync();return true;
+}
+async function accDo(kind,em,pw){
+  ACC.msg='Un momento…';settings();
+  try{
+    if(kind=='reset'){await fbPost('sendOobCode',{requestType:'PASSWORD_RESET',email:em});ACC.msg='📧 Te mandé un correo para cambiar la contraseña.'}
+    else if(kind=='new'){
+      const a=await fbAuth();const j=await fbPost('update',{idToken:a.id,email:em,password:pw,returnSecureToken:true});
+      accSession(Object.assign({localId:a.uid},j,{email:em}));await cloudPush();ACC.msg='✅ Cuenta creada. Tu progreso quedó guardado en la nube.';
+    }else{
+      const j=await fbPost('signInWithPassword',{email:em,password:pw,returnSecureToken:true});accSession(j);
+      const d=await cloudGet();
+      if(d&&confirm('Se encontró un progreso guardado en esta cuenta. ¿Cargarlo? Reemplaza el progreso de este teléfono.')){applyCloud(d);ACC.msg='✅ Progreso cargado.'}
+      else if(!d){await cloudPush();ACC.msg='✅ Entraste. El progreso de este teléfono se guardó en la nube.'}
+      else{await cloudPush();ACC.msg='Entraste. Se guardó el progreso de este teléfono en la nube.'}
+      fbLoad().then(lbRefresh).catch(()=>{});lbSync();
+    }
+  }catch(e){ACC.msg=accErr(e)}
+  render();
+}
+function accOut(){try{localStorage.removeItem('carros2d_fb')}catch(e){}ACC.em=null;FBT=null;LB.uid=null;LB.sig=null;ACC.msg='Saliste de la cuenta. El progreso de este teléfono se queda.';initLB();render()}
+function accCard(L){
+  const d=document.createElement('div');d.className='card set';
+  const t=document.createElement('div');t.className='i';
+  t.innerHTML='<b>👤 Cuenta</b>'+(ACC.em?'Conectado como:':'Crea una cuenta para guardar tu progreso en la nube y recuperarlo en otro teléfono.');
+  d.appendChild(t);
+  if(ACC.em){const e=document.createElement('div');e.style.cssText='font-weight:700;margin:6px 0';e.textContent=ACC.em;d.appendChild(e)}
+  const w=document.createElement('div');w.className='chips';
+  const btn=(txt,fn,on)=>{const b=document.createElement('button');b.className='chip'+(on?' on':'');b.textContent=txt;b.onclick=fn;w.appendChild(b)};
+  if(!ACC.em){
+    const em=document.createElement('input');em.type='email';em.placeholder='Correo';em.autocomplete='email';
+    const pw=document.createElement('input');pw.type='password';pw.placeholder='Contraseña (mínimo 6)';pw.autocomplete='current-password';
+    for(const i of[em,pw]){i.className='inp';d.appendChild(i)}
+    btn('Crear cuenta',()=>accDo('new',em.value.trim(),pw.value),1);btn('Entrar',()=>accDo('in',em.value.trim(),pw.value));btn('Olvidé mi contraseña',()=>accDo('reset',em.value.trim()));
+  }else{
+    btn('☁️ Guardar ahora',async()=>{await cloudPush();settings()},1);
+    btn('⬇️ Cargar de la nube',async()=>{try{const x=await cloudGet();if(x&&confirm('¿Cargar el progreso de la nube? Reemplaza el de este teléfono.')){applyCloud(x);ACC.msg='✅ Progreso cargado.'}else if(!x)ACC.msg='Todavía no hay progreso en la nube.'}catch(e){ACC.msg=accErr(e)}render()});
+    btn('Salir',()=>{if(confirm('¿Salir de la cuenta? El progreso de este teléfono se queda.'))accOut()});
+  }
+  d.appendChild(w);
+  if(ACC.msg){const m=document.createElement('div');m.style.cssText='margin-top:8px;font-size:13px;color:var(--mut)';m.textContent=ACC.msg;d.appendChild(m)}
+  L.appendChild(d);
+}
 function settings(){
   const L=$('list');L.innerHTML='';
   const grp=(title,hint,key,opts)=>{const d=document.createElement('div');d.className='card set';d.innerHTML='<div class="i"><b>'+title+'</b>'+hint+'</div>';const w=document.createElement('div');w.className='chips';
@@ -170,6 +243,7 @@ function settings(){
   grp('🔊 Sonido','Motor, choques, pájaros, clima y habilidades.','snd',[[0,'🔇 Silencio'],[.5,'🔉 Bajo'],[1,'🔊 Normal']]);
   grp('🌑 Sombras','Sombras de coches y obstáculos (más largas al amanecer y atardecer).','shd',[[1,'✅ Activadas'],[0,'🚫 Quitadas']]);
   grp('🚇 Túneles','Aparecen de vez en cuando y oscurecen la carretera.','tun',[[1,'✅ Activados'],[0,'🚫 Quitados']]);
+  accCard(L);
 }
 const AU={c:null,m:null,lc:0};
 function actx(){if(!AU.c){try{AU.c=new(window.AudioContext||window.webkitAudioContext)();AU.m=AU.c.createGain();AU.m.gain.value=S.cfg.snd;AU.m.connect(AU.c.destination)}catch(e){}}if(AU.c&&AU.c.state=='suspended'&&!(state=='play'&&G&&G.paused))AU.c.resume();return AU.c}
